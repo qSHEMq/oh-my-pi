@@ -1,3 +1,4 @@
+import { stat as statFile } from "node:fs/promises";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { TextContent } from "@oh-my-pi/pi-ai";
 import {
@@ -47,38 +48,42 @@ const CACHEABLE_ARCHIVE_FORMATS: Partial<Record<ArchiveFormat, true>> = { zip: t
 
 interface CachedArchiveReader {
 	reader: ArchiveReader;
-	ino: number;
-	mtimeMs: number;
-	/** Change time: moves on every write and permission change and cannot be set back, unlike mtime. */
-	ctimeMs: number;
-	size: number;
+	ino: bigint;
+	mtimeNs: bigint;
+	/** Recent change timestamps are not cached: filesystem granularity can hide rewrites. */
+	ctimeNs: bigint;
+	size: bigint;
 	entryCount: number;
 }
 
 /**
  * Recently opened archives, so paging through members does not re-read and
  * re-index the archive per read. Bounded by count and by total indexed entries;
- * an entry is reused only while the file's identity (inode, mtime, ctime, size)
- * holds, so a rewrite or a permission change reopens the archive.
+ * an entry is reused only while its inode, size and nanosecond mtime/ctime
+ * identity holds. Recent stamps are excluded, matching grep's racy-clean protection.
  */
 const archiveReaderCache = new LRUCache<string, CachedArchiveReader>({
 	max: 4,
 	maxSize: 200_000,
 	sizeCalculation: cached => Math.max(1, cached.entryCount),
 });
+const RACY_STAMP_WINDOW_NS = 2_000_000_000n;
 
 async function openArchiveCached(absolutePath: string): Promise<ArchiveReader> {
 	// A vanished or unreadable archive is reported by the opener, as it always has been.
-	const stat = await Bun.file(absolutePath)
-		.stat()
-		.catch(() => null);
+	const stat = await statFile(absolutePath, { bigint: true }).catch(() => null);
 	if (!stat) return openArchive(absolutePath);
+	const changedNs = stat.mtimeNs > stat.ctimeNs ? stat.mtimeNs : stat.ctimeNs;
+	if (BigInt(Date.now()) * 1_000_000n - changedNs < RACY_STAMP_WINDOW_NS) {
+		archiveReaderCache.delete(absolutePath);
+		return openArchive(absolutePath);
+	}
 	const cached = archiveReaderCache.get(absolutePath);
 	if (
 		cached &&
 		cached.ino === stat.ino &&
-		cached.mtimeMs === stat.mtimeMs &&
-		cached.ctimeMs === stat.ctimeMs &&
+		cached.mtimeNs === stat.mtimeNs &&
+		cached.ctimeNs === stat.ctimeNs &&
 		cached.size === stat.size
 	) {
 		return cached.reader;
@@ -93,8 +98,8 @@ async function openArchiveCached(absolutePath: string): Promise<ArchiveReader> {
 	archiveReaderCache.set(absolutePath, {
 		reader,
 		ino: stat.ino,
-		mtimeMs: stat.mtimeMs,
-		ctimeMs: stat.ctimeMs,
+		mtimeNs: stat.mtimeNs,
+		ctimeNs: stat.ctimeNs,
 		size: stat.size,
 		entryCount,
 	});
