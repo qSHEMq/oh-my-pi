@@ -446,10 +446,12 @@ return {
 		try {
 			// Base64 in a single message would come to 4/3 of the file, over the cap.
 			const digest = await writeRandomFile(path.join(tempDir, "large.bin"), maxMessageBytes);
+			// Three 16 MiB uploads test message framing, not the default cell's 15 s throughput.
 			const errors = await run(
 				collectErrors(`() => tab.uploadFile("#direct", "large.bin"),
 	() => tab.uploadFile("#trigger", "large.bin"),
 	() => tab.uploadFile("#drop", "large.bin"),`),
+				60,
 			);
 			expect(errors).toEqual([]);
 			expect(await run(readDigests)).toEqual([digest, digest, digest]);
