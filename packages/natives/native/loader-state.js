@@ -64,6 +64,15 @@ function getNativesDir() {
 		else if (dir.startsWith("~/") || dir.startsWith("~\\")) dir = os.homedir() + dir.slice(1);
 		if (path.isAbsolute(dir)) return path.normalize(dir);
 	}
+	const configRootOverride = process.env.PI_CONFIG_ROOT?.trim();
+	if (configRootOverride) {
+		let dir = configRootOverride;
+		if (dir === "~") dir = os.homedir();
+		else if (dir.startsWith("~/") || dir.startsWith("~\\")) dir = os.homedir() + dir.slice(1);
+		if (path.isAbsolute(dir) && (process.platform !== "win32" || path.parse(path.normalize(dir)).root.length > 1)) {
+			return path.join(dir, "natives");
+		}
+	}
 	const xdgDataHome = process.env.XDG_DATA_HOME;
 	if (xdgDataHome && fs.existsSync(path.join(xdgDataHome, "omp"))) {
 		return path.join(xdgDataHome, "omp", "natives");

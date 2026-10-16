@@ -1,14 +1,13 @@
 /**
  * Centralized path helpers for omp config directories.
  *
- * Uses PI_CONFIG_DIR (default ".omp") for the config root and
- * PI_CODING_AGENT_DIR to override the agent directory.
+ * PI_CONFIG_ROOT selects an absolute user-state root; otherwise PI_CONFIG_DIR
+ * (default ".omp") names the legacy directory under home. PI_CODING_AGENT_DIR
+ * overrides the default profile's agent directory.
  *
- * On Linux, if XDG_DATA_HOME / XDG_STATE_HOME / XDG_CACHE_HOME environment
- * variables are set, paths are redirected to XDG-compliant locations under
- * $XDG_*_HOME/omp/. This requires running `omp config migrate` first to
- * move data to the new locations. No filesystem existence checks are performed
- * — if the env var is set, omp trusts that the migration has been done.
+ * Without an explicit root, macOS/Linux paths may use initialized
+ * $XDG_*_HOME/omp directories. Named profiles require initialized
+ * profile-specific XDG directories.
  */
 
 import * as fs from "node:fs";
@@ -111,9 +110,9 @@ function readProfileFromEnvSafe(): string | undefined {
 	}
 }
 
-/** Profile-independent config root (~/.omp), shared by every omp profile. */
+/** Profile-independent config root: PI_CONFIG_ROOT or the legacy ~/.omp location. */
 export function getBaseConfigRoot(): string {
-	return path.join(os.homedir(), getConfigDirName());
+	return resolveConfigRootOverride() ?? path.join(os.homedir(), getConfigDirName());
 }
 
 function getProfileConfigRoot(profile: string | undefined): string {
@@ -363,7 +362,8 @@ class DirResolver {
 		let xdgData: string | undefined;
 		let xdgState: string | undefined;
 		let xdgCache: string | undefined;
-		const xdgPlatform = process.platform === "linux" || process.platform === "darwin";
+		const xdgPlatform =
+			(process.platform === "linux" || process.platform === "darwin") && resolveConfigRootOverride() === undefined;
 		if (xdgPlatform && isDefault) {
 			const resolveIf = (envVar: string) => {
 				const value = process.env[envVar];
@@ -713,6 +713,12 @@ function resolveAbsoluteDir(value: string | undefined): string | undefined {
 	return path.isAbsolute(p) ? path.normalize(p) : undefined;
 }
 
+function resolveConfigRootOverride(): string | undefined {
+	const root = resolveAbsoluteDir(process.env.PI_CONFIG_ROOT);
+	// A Windows root-relative path still depends on the launch drive.
+	return root && (process.platform !== "win32" || path.parse(root).root.length > 1) ? root : undefined;
+}
+
 let worktreesDirOverride: string | undefined;
 
 /**
@@ -874,9 +880,12 @@ export function getNativeGrammarsDir(): string {
 	return path.join(getNativesDir(), "grammars");
 }
 
-/** Get the natives directory. PI_NATIVES_DIR overrides the usual cache root; relative values are ignored. */
+/** Get the shared native cache. PI_NATIVES_DIR takes precedence over PI_CONFIG_ROOT. */
 export function getNativesDir(): string {
-	return resolveAbsoluteDir(process.env.PI_NATIVES_DIR) ?? dirs.rootSubdir("natives", "cache");
+	const override = resolveAbsoluteDir(process.env.PI_NATIVES_DIR);
+	if (override) return override;
+	const root = resolveConfigRootOverride();
+	return root ? path.join(root, "natives") : dirs.rootSubdir("natives", "cache");
 }
 
 /** Get the stats database path (~/.omp/stats.db). */

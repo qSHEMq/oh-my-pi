@@ -17,6 +17,7 @@ const ENV_KEYS = [
 	"OMP_PROFILE",
 	"PI_PROFILE",
 	"PI_CONFIG_DIR",
+	"PI_CONFIG_ROOT",
 	"PI_CODING_AGENT_DIR",
 	"XDG_DATA_HOME",
 	"XDG_STATE_HOME",
@@ -42,6 +43,7 @@ describe("XDG-aware runtime paths", () => {
 		defaultAgentDir = path.join(os.homedir(), configDir, "agent");
 		await fs.mkdir(tempRoot, { recursive: true });
 		process.env.PI_CONFIG_DIR = configDir;
+		delete process.env.PI_CONFIG_ROOT;
 		delete process.env.PI_CODING_AGENT_DIR;
 		delete process.env.XDG_DATA_HOME;
 		delete process.env.XDG_STATE_HOME;

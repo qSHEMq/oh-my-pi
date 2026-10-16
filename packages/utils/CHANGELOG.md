@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `PI_CONFIG_ROOT` for an absolute user-state root without changing the user home or legacy `PI_CONFIG_DIR` semantics; profiles stay below that root and native cache overrides retain precedence.
 - Exported `sqliteFileIdentity()`, so a caller holding a long-lived SQLite connection can tell when its path now names a different file (e.g. after a corrupt store was quarantined and replaced) ([#14361](https://github.com/can1357/oh-my-pi/pull/14361) by [@F0Rextasy](https://github.com/F0Rextasy))
 - Added `slugify()`, the shared lowercase ASCII kebab-case helper with an optional `maxLength` ([#14283](https://github.com/can1357/oh-my-pi/pull/14283) by [@jaredlyon](https://github.com/jaredlyon))
 

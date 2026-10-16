@@ -19,11 +19,12 @@
 //! Notes:
 //! - Backtraces are captured via [`Backtrace::force_capture`], so they work
 //!   regardless of `RUST_BACKTRACE`.
-//! - The crash log path mirrors the JS side (`packages/utils/src/dirs.ts`):
-//!   `$XDG_STATE_HOME/omp/logs/` on Linux / macOS when the user has migrated to
-//!   XDG (i.e. that directory already exists and `PI_CODING_AGENT_DIR` isn't
-//!   pointed somewhere custom), otherwise `<home>/<PI_CONFIG_DIR>/logs/`
-//!   (defaulting to `~/.omp/logs/`).
+//! - The crash log path mirrors the JS side (`packages/utils/src/dirs.ts`): a
+//!   valid absolute `PI_CONFIG_ROOT` uses `<root>/logs` first; otherwise
+//!   `$XDG_STATE_HOME/omp/logs/` applies on Linux / macOS when the user has
+//!   migrated to XDG (i.e. that directory already exists and
+//!   `PI_CODING_AGENT_DIR` isn't pointed somewhere custom), falling back to
+//!   `<home>/<PI_CONFIG_DIR>/logs/` (defaulting to `~/.omp/logs/`).
 //! - Hook installation is idempotent across repeated module loads.
 
 use std::{
@@ -43,6 +44,8 @@ use std::{
 	thread,
 	time::{SystemTime, UNIX_EPOCH},
 };
+
+use crate::config_root::config_root_override;
 
 /// Default directory name for OMP's per-user state (overridable via
 /// `PI_CONFIG_DIR`, matching `packages/utils/src/dirs.ts`).
@@ -266,16 +269,26 @@ fn build_crash_log_path(dir: &Path, kind: CrashKind, pid: u32, now_ms: u128) -> 
 
 fn logs_dir() -> Option<PathBuf> {
 	let home = home_dir()?;
+	let root_override = std::env::var_os("PI_CONFIG_ROOT");
 	let config_override = std::env::var_os("PI_CONFIG_DIR");
-	let xdg_logs = xdg_state_logs_from_env(&home, config_override.as_deref());
-	Some(resolve_logs_dir(&home, config_override.as_deref(), xdg_logs))
+	let root = config_root_override(&home, root_override.as_deref().and_then(OsStr::to_str));
+	let xdg_logs = if root.is_none() {
+		xdg_state_logs_from_env(&home, config_override.as_deref())
+	} else {
+		None
+	};
+	Some(resolve_logs_dir(&home, root.as_deref(), config_override.as_deref(), xdg_logs))
 }
 
 fn resolve_logs_dir(
 	home: &Path,
+	root_override: Option<&Path>,
 	config_dir_override: Option<&OsStr>,
 	xdg_state_logs: Option<PathBuf>,
 ) -> PathBuf {
+	if let Some(root) = root_override {
+		return root.join("logs");
+	}
 	// XDG takes precedence so users who migrated to `$XDG_STATE_HOME/omp/logs/`
 	// see native crash reports in the same directory the JS logger rotates.
 	if let Some(p) = xdg_state_logs {
@@ -284,8 +297,7 @@ fn resolve_logs_dir(
 	let config_dir = config_dir_override
 		.filter(|s| !s.is_empty())
 		.unwrap_or_else(|| OsStr::new(DEFAULT_CONFIG_DIR));
-	let base = config_root_dir(home, config_dir);
-	base.join("logs")
+	config_root_dir(home, config_dir).join("logs")
 }
 
 /// Compute the XDG-state logs dir if the runtime environment matches the
@@ -448,7 +460,7 @@ mod tests {
 
 	#[test]
 	fn resolve_logs_dir_defaults_under_dot_omp() {
-		let dir = resolve_logs_dir(Path::new("/tmp/pi-natives-test-home"), None, None);
+		let dir = resolve_logs_dir(Path::new("/tmp/pi-natives-test-home"), None, None, None);
 		assert_eq!(dir, PathBuf::from("/tmp/pi-natives-test-home/.omp/logs"));
 	}
 
@@ -456,6 +468,7 @@ mod tests {
 	fn resolve_logs_dir_honors_relative_pi_config_dir() {
 		let dir = resolve_logs_dir(
 			Path::new("/tmp/pi-natives-test-home"),
+			None,
 			Some(OsStr::new(".omp-dev")),
 			None,
 		);
@@ -464,12 +477,11 @@ mod tests {
 
 	#[test]
 	fn resolve_logs_dir_reroots_absolute_pi_config_dir_under_home() {
-		// JS resolves the config root via `path.join(os.homedir(),
-		// getConfigDirName())`, which never honors an absolute PI_CONFIG_DIR — it
-		// is always re-rooted under `$HOME` (and `..` components are normalized
-		// away).
+		// Legacy PI_CONFIG_DIR remains a name joined beneath HOME; unlike
+		// PI_CONFIG_ROOT, an absolute value is intentionally re-rooted.
 		let dir = resolve_logs_dir(
 			Path::new("/tmp/pi-natives-test-home"),
+			None,
 			Some(OsStr::new("/var/tmp/pi-natives-state")),
 			None,
 		);
@@ -480,10 +492,25 @@ mod tests {
 	fn resolve_logs_dir_normalizes_parent_components_like_path_join() {
 		let dir = resolve_logs_dir(
 			Path::new("/tmp/pi-natives-test-home"),
+			None,
 			Some(OsStr::new("nested/../.omp-dev")),
 			None,
 		);
 		assert_eq!(dir, PathBuf::from("/tmp/pi-natives-test-home/.omp-dev/logs"));
+	}
+
+	#[test]
+	fn explicit_config_root_precedes_xdg_logs() {
+		let home = if cfg!(windows) {
+			Path::new("C:/users/probe")
+		} else {
+			Path::new("/home/probe")
+		};
+		let root = home.join("physical-state");
+		assert_eq!(
+			resolve_logs_dir(home, Some(&root), None, Some(home.join("xdg/logs"))),
+			root.join("logs")
+		);
 	}
 
 	#[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -503,7 +530,7 @@ mod tests {
 	#[test]
 	fn resolve_logs_dir_ignores_empty_pi_config_dir() {
 		let dir =
-			resolve_logs_dir(Path::new("/tmp/pi-natives-test-home"), Some(OsStr::new("")), None);
+			resolve_logs_dir(Path::new("/tmp/pi-natives-test-home"), None, Some(OsStr::new("")), None);
 		assert_eq!(dir, PathBuf::from("/tmp/pi-natives-test-home/.omp/logs"));
 	}
 
@@ -511,6 +538,7 @@ mod tests {
 	fn resolve_logs_dir_prefers_xdg_when_provided() {
 		let dir = resolve_logs_dir(
 			Path::new("/tmp/pi-natives-test-home"),
+			None,
 			None,
 			Some(PathBuf::from("/xdg/state/omp/logs")),
 		);

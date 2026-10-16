@@ -9,6 +9,9 @@ const ENV_KEYS = [
 	"HOME",
 	"USERPROFILE",
 	"PI_NATIVES_DIR",
+	"PI_CONFIG_ROOT",
+	"OMP_PROFILE",
+	"PI_PROFILE",
 	"XDG_DATA_HOME",
 	"PI_NATIVE_VARIANT",
 	"__PI_NATIVE_VARIANT_CACHE",
@@ -49,6 +52,7 @@ describe("native addon directory override", () => {
 		const xdgData = path.join(tempRoot, "data");
 		await fs.mkdir(path.join(xdgData, "omp"), { recursive: true });
 		process.env.PI_NATIVES_DIR = ` ${shared} `;
+		process.env.PI_CONFIG_ROOT = path.join(tempRoot, "config-root");
 
 		const ctx = initLoaderContext({ isCompiledBinary: true });
 		prepareNativeVersionDir(ctx.versionedDir);
@@ -59,6 +63,29 @@ describe("native addon directory override", () => {
 		expect(await fs.readdir(shared)).toEqual([packageJson.version]);
 		expect(await fs.readdir(home)).toEqual([]);
 		expect(await fs.readdir(path.join(xdgData, "omp"))).toEqual([]);
+	});
+	it("uses PI_CONFIG_ROOT for compiled extraction independently of the active profile", async () => {
+		const root = path.join(tempRoot, "config-root");
+		process.env.PI_CONFIG_ROOT = ` ${root} `;
+
+		process.env.OMP_PROFILE = "work";
+		const workContext = initLoaderContext({ isCompiledBinary: true });
+		prepareNativeVersionDir(workContext.versionedDir);
+		process.env.OMP_PROFILE = "other";
+		const otherContext = initLoaderContext({ isCompiledBinary: true });
+
+		const nativesDir = path.join(root, "natives");
+		expect(workContext.versionedDir).toBe(path.join(nativesDir, packageJson.version));
+		expect(otherContext.versionedDir).toBe(workContext.versionedDir);
+		expect(await fs.readdir(nativesDir)).toEqual([packageJson.version]);
+		expect(await fs.readdir(home)).toEqual([]);
+	});
+	it("expands a home-relative PI_CONFIG_ROOT before adding the shared natives directory", () => {
+		process.env.PI_CONFIG_ROOT = " ~/unused/../config ";
+
+		expect(initLoaderContext({ isCompiledBinary: true }).versionedDir).toBe(
+			path.join(home, "config", "natives", packageJson.version),
+		);
 	});
 
 	it("expands home-relative overrides before appending the package version", () => {
@@ -80,6 +107,26 @@ describe("native addon directory override", () => {
 		await fs.mkdir(path.join(xdgData, "omp"), { recursive: true });
 		process.env.XDG_DATA_HOME = xdgData;
 		process.env.PI_NATIVES_DIR = override;
+
+		expect(initLoaderContext({ isCompiledBinary: true }).versionedDir).toBe(
+			path.join(xdgData, "omp", "natives", packageJson.version),
+		);
+	});
+	it.each([
+		["empty", ""],
+		["whitespace", " \t "],
+		["relative", "relative/config"],
+		...(process.platform === "win32"
+			? [
+					["drive-relative", "C:relative"],
+					["root-relative", "\\root-relative"],
+				]
+			: []),
+	])("falls back to XDG when PI_CONFIG_ROOT is %s", async (_label, override) => {
+		const xdgData = path.join(tempRoot, "data");
+		await fs.mkdir(path.join(xdgData, "omp"), { recursive: true });
+		process.env.XDG_DATA_HOME = xdgData;
+		process.env.PI_CONFIG_ROOT = override;
 
 		expect(initLoaderContext({ isCompiledBinary: true }).versionedDir).toBe(
 			path.join(xdgData, "omp", "natives", packageJson.version),
