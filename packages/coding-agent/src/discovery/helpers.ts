@@ -5,7 +5,9 @@ import { FileType, glob } from "@oh-my-pi/pi-natives";
 import {
 	CONFIG_DIR_NAME,
 	getAgentDir,
+	getBaseConfigRoot,
 	getConfigDirName,
+	getConfigRootDir,
 	getPluginsDir,
 	getProjectDir,
 	logger,
@@ -1038,6 +1040,8 @@ export function getProjectDiscoveryCeilings(): ReadonlySet<string> {
 	const ceilings = new Set<string>();
 	ceilings.add(normalizePathForComparison(os.homedir()));
 	ceilings.add(normalizePathForComparison(os.tmpdir()));
+	ceilings.add(normalizePathForComparison(getBaseConfigRoot()));
+	ceilings.add(normalizePathForComparison(getConfigRootDir()));
 	if (process.platform !== "win32") {
 		ceilings.add(normalizePathForComparison("/tmp"));
 		ceilings.add(normalizePathForComparison("/var/tmp"));
@@ -1049,6 +1053,8 @@ export function getProjectDiscoveryCeilings(): ReadonlySet<string> {
 export function isUserConfigRoot(root: string): boolean {
 	const configDir = normalizePathForComparison(path.join(root, getConfigDirName()));
 	return (
+		normalizePathForComparison(root) === normalizePathForComparison(getBaseConfigRoot()) ||
+		normalizePathForComparison(root) === normalizePathForComparison(getConfigRootDir()) ||
 		configDir === normalizePathForComparison(path.join(os.homedir(), getConfigDirName())) ||
 		configDir === normalizePathForComparison(path.dirname(getPluginsDir()))
 	);

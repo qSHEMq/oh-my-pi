@@ -59,7 +59,7 @@ Key integration points:
 
 User-level bases:
 
-- OMP native: `~/<PI_CONFIG_DIR>/agent` (normally `~/.omp/agent`; a named profile changes this as described below)
+- OMP native: `<PI_CONFIG_ROOT>/agent` when an absolute root is set, otherwise `~/<PI_CONFIG_DIR>/agent` (normally `~/.omp/agent`; named profiles are described below)
 - Claude's active config directory (`~/.claude` by default; `CLAUDE_CONFIG_DIR` overrides it)
 - `~/.codex`
 - `~/.gemini`
@@ -72,6 +72,19 @@ Project-level bases:
 - `<cwd>/.gemini`
 
 `CONFIG_DIR_NAME` is `.omp` (`packages/utils/src/dirs.ts`). `PI_CONFIG_DIR` changes the OMP user root used by the generic helpers. `PI_CODING_AGENT_DIR` is different: for the default profile it changes `getAgentDir()` consumers such as native discovery, settings, and runtime state, but it does **not** change the generic `getConfigDirs()` / `findConfigFile()` OMP base. Named profiles ignore `PI_CODING_AGENT_DIR`.
+
+`PI_CONFIG_ROOT` selects an absolute, profile-independent user-state root before home/XDG placement. It relocates global configuration, agent state and plugins without changing the meaning of `PI_CONFIG_DIR`, project-local `.omp` directories, or the real user home. Named profiles live below `<root>/profiles/<name>`; native addons share `<root>/natives` unless `PI_NATIVES_DIR` overrides it. Existing default-profile `PI_CODING_AGENT_DIR` precedence is preserved.
+
+Native OAuth callback leases, recovery journals and helpers use `<root>/oauth/native/<platform>/<scheme>`. They remain shared across profiles, like the operating system's URL-scheme registration; changing the root does not migrate existing callback state.
+
+For example, when a Windows home `.omp` junction points at a physical directory on another drive:
+
+```powershell
+$env:PI_CONFIG_ROOT = 'F:\omp-data'
+omp
+```
+
+Set this before launching OMP; putting it only in the relocated `.env` is too late for native bootstrap. Empty/relative values are ignored, including Windows root-relative paths such as `\omp-data`. No files are moved, no junctions are automatically followed, and Windows security policies are unchanged. Use a trusted root that other users cannot modify.
 
 ## Profiles
 

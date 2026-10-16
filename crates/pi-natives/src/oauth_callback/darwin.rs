@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use super::context::{Context, atomic_write};
+use crate::config_root::config_root_override;
 
 const SNAPSHOT_VERSION: u32 = 1;
 const BUNDLE_PREFIX: &str = "dev.omp.oauth-callback.";
@@ -417,17 +418,30 @@ fn remove_own_registration(
 }
 
 fn legacy_recovery_path(context: &Context) -> PathBuf {
-	let config_directory = context
-		.env
-		.get("PI_CONFIG_DIR")
-		.map(|value| value.trim())
-		.filter(|value| !value.is_empty())
-		.unwrap_or(".omp");
-	context
-		.home
-		.join(config_directory)
-		.join("oauth")
-		.join(LEGACY_RECOVERY_FILE)
+	let root = config_root(
+		&context.home,
+		context.env.get("PI_CONFIG_ROOT").map(String::as_str),
+		context.env.get("PI_CONFIG_DIR").map(String::as_str),
+	);
+	root.join("oauth").join(LEGACY_RECOVERY_FILE)
+}
+
+fn config_root(
+	home: &Path,
+	root_override: Option<&str>,
+	config_dir_override: Option<&str>,
+) -> PathBuf {
+	if let Some(root) = config_root_override(home, root_override) {
+		return root;
+	}
+	// Preserve legacy PI_CONFIG_DIR joining semantics, including an absolute
+	// value replacing HOME during Path::join.
+	home.join(
+		config_dir_override
+			.map(str::trim)
+			.filter(|value| !value.is_empty())
+			.unwrap_or(".omp"),
+	)
 }
 
 fn valid_legacy_record(context: &Context, record: &LegacyRecoveryRecord) -> bool {
@@ -769,6 +783,31 @@ mod tests {
 
 	fn found(path: impl Into<PathBuf>, bundle_id: impl Into<String>) -> ApplicationState {
 		ApplicationState::Found { app_path: path.into(), bundle_id: bundle_id.into() }
+	}
+	#[test]
+	fn config_root_prefers_trimmed_absolute_root_and_expands_tilde() {
+		let home = Path::new("/tmp/pi-native-oauth-home");
+		assert_eq!(
+			config_root(home, Some("  /var/tmp/omp-state/../omp  "), Some("/legacy")),
+			PathBuf::from("/var/tmp/omp")
+		);
+		assert_eq!(
+			config_root(home, Some("~/state"), None),
+			PathBuf::from("/tmp/pi-native-oauth-home/state")
+		);
+	}
+
+	#[test]
+	fn config_root_ignores_relative_and_empty_roots() {
+		let home = Path::new("/tmp/pi-native-oauth-home");
+		assert_eq!(
+			config_root(home, Some("relative/root"), Some(".omp-dev")),
+			PathBuf::from("/tmp/pi-native-oauth-home/.omp-dev")
+		);
+		assert_eq!(
+			config_root(home, Some("  "), None),
+			PathBuf::from("/tmp/pi-native-oauth-home/.omp")
+		);
 	}
 
 	fn context(

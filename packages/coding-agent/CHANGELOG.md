@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `PI_CONFIG_ROOT` for an explicit absolute user-state root, including generic discovery and user-agent persistence across profiles, without changing the user home or Windows security policies.
 - Added `lsp.requestTimeout` setting to configure wait durations for language server diagnostics and requests
 - Added `omp auth-gateway serve --clients=<file>`: per-client bearer tokens, each limited to listed models and broker OAuth accounts with no fallback to other accounts or API keys, re-read while serving ([#5098](https://github.com/can1357/oh-my-pi/issues/5098), [#15900](https://github.com/can1357/oh-my-pi/pull/15900) by [@alphastorm](https://github.com/alphastorm))
 
@@ -18,6 +19,8 @@
 
 ### Fixed
 
+- Fixed late close/error callbacks from an old daemon-broker connection rejecting requests on its replacement connection.
+- Fixed stale archive listings after same-size rewrites with restored mtime, including filesystem timestamp collisions.
 - Fixed Ctrl+C printing `9;5u` in the shell after force-quitting omp with a third Ctrl+C while it was still closing the session
 - Fixed Smart unexpected-stop recovery continuing finished answers, which added extra "nothing more to add" turns
 - Fixed browser `uploadFile` failing with "Not allowed" through the relay or into a Chrome on another machine, stalling behind macOS folder-privacy prompts, and breaking the tab on large drop-zone files ([#15489](https://github.com/can1357/oh-my-pi/pull/15489) by [@will-bogusz](https://github.com/will-bogusz))

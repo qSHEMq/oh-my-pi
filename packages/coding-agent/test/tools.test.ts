@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
+import * as fsAsync from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
@@ -1792,6 +1793,50 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("bravo.txt");
 			expect(output).not.toContain("alpha.txt");
 		});
+
+		it.each(["recent collision", "aged nanosecond change"] as const)(
+			"invalidates an archive index with %s",
+			async kind => {
+				const archivePath = path.join(testDir, `${kind}.zip`);
+				const pinnedMtime = new Date("2024-01-01T00:00:00Z");
+				fs.writeFileSync(archivePath, createZipArchive([{ path: "alpha.txt", content: "first\n" }]));
+				fs.utimesSync(archivePath, pinnedMtime, pinnedMtime);
+				const originalStat = fsAsync.stat;
+				const now = Date.now();
+				vi.spyOn(Date, "now").mockReturnValue(now);
+				const stamp = BigInt(now - (kind === "recent collision" ? 0 : 3_000)) * 1_000_000n;
+				let revision = 0n;
+				// Preserve stat's overloads and real reader behavior while simulating coarse metadata.
+				const controlledStat = new Proxy(originalStat, {
+					async apply(target, thisArg, args) {
+						const stat: unknown = await Reflect.apply(target, thisArg, args);
+						if (
+							typeof args[0] === "string" &&
+							path.resolve(args[0]) === path.resolve(archivePath) &&
+							typeof stat === "object" &&
+							stat !== null &&
+							"ctimeNs" in stat
+						) {
+							Object.assign(stat, {
+								ctimeNs: stamp + (kind === "aged nanosecond change" ? revision : 0n),
+								ctimeMs: stamp / 1_000_000n,
+							});
+						}
+						return stat;
+					},
+				});
+				vi.spyOn(fsAsync, "stat").mockImplementation(controlledStat);
+				expect(getTextOutput(await readTool.execute("zip-stamp-before", { path: archivePath }))).toContain(
+					"alpha.txt",
+				);
+				fs.writeFileSync(archivePath, createZipArchive([{ path: "bravo.txt", content: "other\n" }]));
+				fs.utimesSync(archivePath, pinnedMtime, pinnedMtime);
+				revision++;
+				const output = getTextOutput(await readTool.execute("zip-stamp-after", { path: archivePath }));
+				expect(output).toContain("bravo.txt");
+				expect(output).not.toContain("alpha.txt");
+			},
+		);
 
 		it("should list zip archives without inflating member payloads", async () => {
 			const archivePath = path.join(testDir, "header-only.zip");

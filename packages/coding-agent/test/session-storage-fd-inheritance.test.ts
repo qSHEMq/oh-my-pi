@@ -3,18 +3,15 @@
  * the rotating log — must not reach the commands the bash tool runs.
  *
  * The bash tool executes through the natives brush shell, which `fork`/`exec`s
- * external commands and therefore hands every inheritable descriptor to them
- * (the same property pinned by `config-value-fd-inheritance.test.ts`). Bun's
- * `fs.open*` omits `O_CLOEXEC` where libuv adds it, so before #13224 a command
- * — or any daemon it started — held a writable handle to the session it was
- * launched from for its whole life.
+ * external commands. Before #13224 a command — or any daemon it started —
+ * could hold a writable handle to the session it was launched from.
  *
- * Oracle: list the child's descriptor table. `sh -c` is required — a bare `ls`
- * resolves to an in-process builtin, whose `$$` is omp itself. A deliberately
- * inheritable control descriptor (the exact `fs.openSync(path, "a")` the
- * pre-fix writer used) runs in the same child so the assertions cannot pass
- * vacuously. /proc makes this Linux-only; the helper's flag handling is
- * covered on every platform by `packages/utils/test/fs-open.test.ts`.
+ * Oracle: verify the private descriptors are open in the parent, then list a
+ * real child's descriptor table. The child explicitly opens a control fd
+ * before execing `ls`, so the listing cannot pass vacuously. Do not assume a
+ * raw Bun fs.openSync descriptor is inheritable: Bun 1.4.3 sets O_CLOEXEC.
+ * /proc makes this Linux-only; the helper's flag handling is covered on every
+ * platform by `packages/utils/test/fs-open.test.ts`.
  */
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -53,21 +50,33 @@ test.skipIf(process.platform !== "linux")("bash tool children never inherit sess
 	logSink.write("entry");
 
 	const control = path.join(root, "control.jsonl");
-	const controlFd = fs.openSync(control, "a");
-
 	let output = "";
 	try {
-		await new Shell().run({ command: "sh -c 'ls -l /proc/$$/fd'", cwd: root }, (_err, chunk) => {
-			output += chunk;
-		});
+		const parentTargets: string[] = [];
+		for (const fd of fs.readdirSync("/proc/self/fd")) {
+			try {
+				parentTargets.push(fs.readlinkSync(`/proc/self/fd/${fd}`));
+			} catch (error) {
+				// The directory listing itself can have already closed its fd.
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			}
+		}
+		expect(parentTargets).toContain(transcript);
+		expect(parentTargets.some(target => target.startsWith(`${logsDir}${path.sep}`))).toBe(true);
+		const result = await new Shell().run(
+			{ command: "sh -c 'exec 9>>control.jsonl; ls -l /proc/$$/fd'", cwd: root },
+			(_err, chunk) => {
+				output += chunk;
+			},
+		);
+		expect(result.exitCode).toBe(0);
 	} finally {
-		fs.closeSync(controlFd);
 		logSink.close();
 		await writer.close();
 	}
 
 	const inherited = output.split("\n").filter(line => line.includes(root));
-	expect(inherited.join("\n"), "control: an inheritable descriptor must reach the child").toContain(control);
+	expect(inherited.join("\n"), "control: the child's explicit descriptor must reach ls").toContain(control);
 	expect(inherited.join("\n")).not.toContain(transcript);
 	expect(inherited.join("\n")).not.toMatch(/omp\.[\d-]+\.\d+\.log/);
 });

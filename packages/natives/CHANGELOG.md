@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `PI_CONFIG_ROOT` support for compiled native extraction and native OAuth callback storage. Profiles share `<root>/natives` and `<root>/oauth/native`; `PI_NATIVES_DIR` still overrides addon placement.
 - Added `parseCodeStatus` to check code syntax and its resolved language without generating a summary ([#15904](https://github.com/can1357/oh-my-pi/pull/15904) by [@iliaal](https://github.com/iliaal)).
 
 ### Changed

@@ -135,7 +135,7 @@ describe("resolveActiveProjectRegistryPath", () => {
 		const tempRoot = path.join(tmpDir, "tmp");
 		const alias = path.join(tmpDir, "tmp-link");
 		fs.mkdirSync(path.join(tempRoot, ".omp"), { recursive: true });
-		fs.symlinkSync(tempRoot, alias, "dir");
+		fs.symlinkSync(tempRoot, alias, process.platform === "win32" ? "junction" : "dir");
 		vi.spyOn(os, "tmpdir").mockReturnValue(`${alias}${path.sep}`);
 		vi.spyOn(os, "homedir").mockReturnValue(path.join(tmpDir, "home"));
 
@@ -261,6 +261,24 @@ describe("resolveActiveProjectRegistryPath", () => {
 		}
 	});
 
+	it("does not treat an explicitly relocated user root as project configuration", async () => {
+		const before = process.env.PI_CONFIG_ROOT;
+		const cwd = path.join(tmpDir, "scratch");
+		fs.mkdirSync(path.join(tmpDir, ".git"), { recursive: true });
+		fs.mkdirSync(path.join(tmpDir, ".omp", "plugins"), { recursive: true });
+		fs.mkdirSync(cwd, { recursive: true });
+		try {
+			process.env.PI_CONFIG_ROOT = tmpDir;
+			piUtils.__resetDirsFromEnvForTests();
+			expect(await resolveActiveProjectRegistryPath(cwd)).toBeNull();
+			expect(await resolveOrDefaultProjectRegistryPath(tmpDir)).toBeUndefined();
+		} finally {
+			if (before === undefined) delete process.env.PI_CONFIG_ROOT;
+			else process.env.PI_CONFIG_ROOT = before;
+			piUtils.__resetDirsFromEnvForTests();
+		}
+	});
+
 	it("canonical path — /repo and /repo/src resolve to the same registry file", async () => {
 		// Both sub-directories of the same project must produce identical paths.
 		fs.mkdirSync(path.join(tmpDir, ".omp"), { recursive: true });
@@ -281,7 +299,7 @@ describe("resolveActiveProjectRegistryPath", () => {
 		const registryPath = path.join(home, ".omp", "plugins", "installed_plugins.json");
 		fs.mkdirSync(cwd, { recursive: true });
 		fs.mkdirSync(path.dirname(registryPath), { recursive: true });
-		fs.symlinkSync(home, link, "dir");
+		fs.symlinkSync(home, link, process.platform === "win32" ? "junction" : "dir");
 		await writeInstalledPluginsRegistry(registryPath, {
 			version: 2,
 			plugins: { "sample@local": [makeEntry(path.join(tmpDir, "sample"))] },
@@ -309,7 +327,11 @@ describe("resolveActiveProjectRegistryPath", () => {
 		const project = path.join(home, "work");
 		fs.mkdirSync(path.join(home, ".omp"), { recursive: true });
 		fs.mkdirSync(path.join(project, ".git"), { recursive: true });
-		fs.symlinkSync(path.join(home, ".omp"), path.join(project, ".omp"), "dir");
+		fs.symlinkSync(
+			path.join(home, ".omp"),
+			path.join(project, ".omp"),
+			process.platform === "win32" ? "junction" : "dir",
+		);
 		vi.spyOn(os, "homedir").mockReturnValue(home);
 
 		expect(await resolveActiveProjectRegistryPath(project)).toBeNull();

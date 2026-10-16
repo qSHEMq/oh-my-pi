@@ -45,6 +45,7 @@ describe("profile directories", () => {
 	let originalOmpProfileEnv: string | undefined;
 	let originalPiProfileEnv: string | undefined;
 	let originalConfigDir: string | undefined;
+	let originalConfigRoot: string | undefined;
 	let originalXdgDataHome: string | undefined;
 	let originalXdgStateHome: string | undefined;
 	let originalXdgCacheHome: string | undefined;
@@ -56,6 +57,8 @@ describe("profile directories", () => {
 		originalOmpProfileEnv = process.env.OMP_PROFILE;
 		originalPiProfileEnv = process.env.PI_PROFILE;
 		originalConfigDir = process.env.PI_CONFIG_DIR;
+		originalConfigRoot = process.env.PI_CONFIG_ROOT;
+		delete process.env.PI_CONFIG_ROOT;
 		originalXdgDataHome = process.env.XDG_DATA_HOME;
 		originalXdgStateHome = process.env.XDG_STATE_HOME;
 		originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -76,6 +79,8 @@ describe("profile directories", () => {
 
 	afterEach(async () => {
 		setProfile(undefined);
+		if (originalConfigRoot === undefined) delete process.env.PI_CONFIG_ROOT;
+		else process.env.PI_CONFIG_ROOT = originalConfigRoot;
 		if (originalConfigDir === undefined) {
 			delete process.env.PI_CONFIG_DIR;
 		} else {

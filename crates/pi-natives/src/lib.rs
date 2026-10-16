@@ -28,6 +28,7 @@ pub mod ast;
 pub mod audio;
 pub mod block;
 pub mod clipboard;
+mod config_root;
 pub mod crash_handler;
 pub mod desktop;
 pub mod devicecheck;

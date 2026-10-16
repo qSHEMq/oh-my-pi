@@ -633,11 +633,15 @@ describe("browser tabs whose renderer crashed", () => {
 		async () => {
 			let requests = 0;
 			const started = Promise.withResolvers<void>();
+			const resume = Promise.withResolvers<void>();
 			const server = Bun.serve({
 				port: 0,
 				fetch: request => {
-					if (new URL(request.url).pathname === "/started") started.resolve();
-					else requests++;
+					if (new URL(request.url).pathname === "/started") {
+						started.resolve();
+						return resume.promise.then(() => new Response("ok"));
+					}
+					requests++;
 					return new Response("ok");
 				},
 			});
@@ -662,17 +666,19 @@ describe("browser tabs whose renderer crashed", () => {
 				}
 				expect(getTab(name)).toMatchObject({ worker: { mode: "inline" } });
 				const run = runInTab(name, {
-					code: `await fetch("http://127.0.0.1:${server.port}/started"); await wait(2_000); await fetch("http://127.0.0.1:${server.port}/after-crash");`,
+					code: `await wait(async () => { await fetch("http://127.0.0.1:${server.port}/started"); return true; }); await fetch("http://127.0.0.1:${server.port}/after-crash");`,
 					timeoutMs: 10_000,
 					session,
 				}).catch((error: unknown) => error);
 				await started.promise;
 				await crashRenderer(browser, url);
 				expect(String(await run)).toContain("the tab could not be reattached and was closed");
-				// A run left going reaches the second fetch two seconds after it started; nothing marks that it did not.
+				// The predicate cannot finish before the crash error reaches the caller.
+				resume.resolve();
 				await Bun.sleep(2_500);
 				expect(requests).toBe(0);
 			} finally {
+				resume.resolve();
 				await releaseTab(name, { kill: true });
 				if ("browser" in browser && browser.browser.connected) await releaseBrowser(browser, { kill: true });
 				server.stop(true);
