@@ -163,6 +163,28 @@ fn prepare_failure_releases_lease_and_removes_private_artifacts() {
 }
 
 #[test]
+fn explicit_root_keeps_oauth_lease_and_recovery_outside_home() {
+	let _serial = TEST_SERIAL.blocking_lock();
+	let home = temp_home("explicit-root-home");
+	let selected = temp_home("explicit-root-state");
+	let selected_value = selected.to_str().unwrap();
+	let first = core(home.clone(), environment(&[("PI_CONFIG_ROOT", selected_value)]));
+	let competing = core(home.clone(), environment(&[("PI_CONFIG_ROOT", selected_value)]));
+	let mut registration = active(start_blocking(&first, CancelToken::default()).unwrap());
+	let root = selected
+		.join("oauth/native")
+		.join(platform_name())
+		.join("omp-test");
+	assert!(start_blocking(&competing, CancelToken::default()).is_err());
+	assert!(root.join("registration.json").exists());
+	assert!(!home.join(".omp").exists());
+	cleanup_registration(&mut registration, CancelToken::default()).unwrap();
+	assert!(!root.join("registration.json").exists());
+	fs::remove_dir_all(home).unwrap();
+	fs::remove_dir_all(selected).unwrap();
+}
+
+#[test]
 fn activation_failure_restores_even_after_mutating_os_state() {
 	let _serial = TEST_SERIAL.blocking_lock();
 	let home = temp_home("activation");
@@ -173,7 +195,7 @@ fn activation_failure_restores_even_after_mutating_os_state() {
 	assert!(error.to_string().contains("injected activation failure"));
 	assert!(!home.join(".oauth-owner-omp-test").exists());
 	assert!(
-		!storage_root(&home, "omp-test")
+		!native_oauth_root(&home, None, platform_name(), "omp-test")
 			.join("registration.json")
 			.exists()
 	);
@@ -192,7 +214,7 @@ fn uncertain_restore_retains_journal_and_ownership() {
 	assert!(error.to_string().contains("recovery journal retained"));
 	assert!(home.join(".oauth-owner-omp-test").exists());
 	assert!(
-		storage_root(&home, "omp-test")
+		native_oauth_root(&home, None, platform_name(), "omp-test")
 			.join("registration.json")
 			.exists()
 	);
@@ -203,7 +225,7 @@ fn uncertain_restore_retains_journal_and_ownership() {
 fn stale_journal_is_recovered_before_successor_activation() {
 	let _serial = TEST_SERIAL.blocking_lock();
 	let home = temp_home("stale");
-	let root = storage_root(&home, "omp-test");
+	let root = native_oauth_root(&home, None, platform_name(), "omp-test");
 	ensure_storage_root(&root).unwrap();
 	let old_id = "0123456789abcdef0123456789abcdef";
 	let old_env = environment(&[]);
@@ -237,6 +259,49 @@ fn stale_journal_is_recovered_before_successor_activation() {
 	);
 	cleanup_registration(&mut registration, CancelToken::default()).unwrap();
 	fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn relocated_stale_recovery_removes_ownership_from_the_real_home() {
+	let _serial = TEST_SERIAL.blocking_lock();
+	let container = temp_home("relocated-stale");
+	let home = container.join("real-home");
+	let selected = container.join("selected-state");
+	fs::create_dir_all(&home).unwrap();
+	let root = native_oauth_root(&home, selected.to_str(), platform_name(), "omp-test");
+	ensure_storage_root(&root).unwrap();
+	let old_id = "0123456789abcdef0123456789abcdef";
+	let old_context = Context::new(
+		home.clone(),
+		root.join(old_id),
+		"omp-test".to_owned(),
+		old_id.to_owned(),
+		environment(&[]),
+		CancelToken::default(),
+	);
+	ensure_private_dir(&old_context.directory).unwrap();
+	let snapshot = backend::prepare(&old_context).unwrap();
+	backend::activate(&old_context, &snapshot).unwrap();
+	let journal = Journal {
+		version: JOURNAL_VERSION,
+		id: old_id.to_owned(),
+		scheme: "omp-test".to_owned(),
+		environment: journal_environment(&old_context.env),
+		snapshot,
+	};
+	atomic_write(&root.join("registration.json"), &serde_json::to_vec(&journal).unwrap(), 0o600)
+		.unwrap();
+	let core = core(
+		home.clone(),
+		environment(&[("PI_CONFIG_ROOT", selected.to_str().unwrap()), ("TEST_PREPARE_FAIL", "1")]),
+	);
+	// Fail successor preparation after recovery, before it can overwrite
+	// ownership.
+	assert!(start_blocking(&core, CancelToken::default()).is_err());
+	assert!(!home.join(".oauth-owner-omp-test").exists());
+	assert!(!old_context.directory.exists());
+	assert!(!root.join("registration.json").exists());
+	fs::remove_dir_all(container).unwrap();
 }
 
 #[test]

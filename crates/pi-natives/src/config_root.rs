@@ -33,6 +33,17 @@ pub(crate) fn config_root_override(home: &Path, value: Option<&str>) -> Option<P
 	Some(normalized)
 }
 
+pub(crate) fn native_oauth_root(
+	home: &Path,
+	root_override: Option<&str>,
+	platform: &str,
+	scheme: &str,
+) -> PathBuf {
+	let mut root = config_root_override(home, root_override).unwrap_or_else(|| home.join(".omp"));
+	root.extend(["oauth", "native", platform, scheme]);
+	root
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -68,6 +79,25 @@ mod tests {
 	fn ignores_unset_empty_and_relative_roots() {
 		for value in [None, Some(""), Some(" \t "), Some("relative/state")] {
 			assert_eq!(config_root_override(home(), value), None);
+		}
+	}
+
+	#[test]
+	fn oauth_storage_uses_the_selected_root_without_moving_home() {
+		let root = if cfg!(windows) {
+			"F:/state"
+		} else {
+			"/var/state"
+		};
+		assert_eq!(
+			native_oauth_root(home(), Some(root), "windows", "omp-test"),
+			Path::new(root).join("oauth/native/windows/omp-test")
+		);
+		for value in [None, Some(" "), Some("relative/state")] {
+			assert_eq!(
+				native_oauth_root(home(), value, "windows", "omp-test"),
+				home().join(".omp/oauth/native/windows/omp-test")
+			);
 		}
 	}
 

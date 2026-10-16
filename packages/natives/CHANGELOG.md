@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added `PI_CONFIG_ROOT` support for compiled native extraction, sharing `<root>/natives` across profiles while preserving `PI_NATIVES_DIR` precedence.
+- Added `PI_CONFIG_ROOT` support for compiled native extraction and native OAuth callback storage. Profiles share `<root>/natives` and `<root>/oauth/native`; `PI_NATIVES_DIR` still overrides addon placement.
 
 ### Changed
 

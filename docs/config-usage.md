@@ -75,6 +75,8 @@ Project-level bases:
 
 `PI_CONFIG_ROOT` selects an absolute, profile-independent user-state root before home/XDG placement. It relocates global configuration, agent state and plugins without changing the meaning of `PI_CONFIG_DIR`, project-local `.omp` directories, or the real user home. Named profiles live below `<root>/profiles/<name>`; native addons share `<root>/natives` unless `PI_NATIVES_DIR` overrides it. Existing default-profile `PI_CODING_AGENT_DIR` precedence is preserved.
 
+Native OAuth callback leases, recovery journals and helpers use `<root>/oauth/native/<platform>/<scheme>`. They remain shared across profiles, like the operating system's URL-scheme registration; changing the root does not migrate existing callback state.
+
 For example, when a Windows home `.omp` junction points at a physical directory on another drive:
 
 ```powershell

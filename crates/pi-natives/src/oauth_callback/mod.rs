@@ -67,6 +67,7 @@ use unsupported as platform;
 use windows as platform;
 
 use crate::{
+	config_root::native_oauth_root,
 	file_lock::FileLock,
 	task::{self, AbortReason, AbortToken, CancelToken},
 };
@@ -351,7 +352,12 @@ fn start_blocking(core: &Core, cancel: CancelToken) -> AnyResult<StartOutcome> {
 	{
 		let home = fs::canonicalize(&core.home)
 			.with_context(|| format!("failed to resolve user home {}", core.home.display()))?;
-		let root = storage_root(&home, &core.scheme);
+		let root = native_oauth_root(
+			&home,
+			core.env.get("PI_CONFIG_ROOT").map(String::as_str),
+			platform_name(),
+			&core.scheme,
+		);
 		ensure_storage_root(&root)?;
 		let lease_path = root.join("lease");
 		let lease = FileLock::try_acquire_path(&lease_path)?;
@@ -360,7 +366,7 @@ fn start_blocking(core: &Core, cancel: CancelToken) -> AnyResult<StartOutcome> {
 		}
 		let journal_path = root.join("registration.json");
 		if journal_path.exists() {
-			recover_stale(core, &root, &journal_path, cancel.clone())?;
+			recover_stale(core, &home, &root, &journal_path, cancel.clone())?;
 		}
 		cancel
 			.heartbeat()
@@ -464,6 +470,7 @@ fn finish_start(core: &Core, operation: u64, result: AnyResult<StartOutcome>) ->
 
 fn recover_stale(
 	core: &Core,
+	home: &Path,
 	root: &Path,
 	journal_path: &Path,
 	cancel: CancelToken,
@@ -478,13 +485,8 @@ fn recover_stale(
 			environment.insert(key.to_owned(), value.clone());
 		}
 	}
-	let home = root
-		.ancestors()
-		.nth(5)
-		.ok_or_else(|| anyhow!("invalid native OAuth storage root"))?
-		.to_owned();
 	let context = Context::new(
-		home,
+		home.to_path_buf(),
 		directory,
 		journal.scheme.clone(),
 		journal.id.clone(),
@@ -804,15 +806,6 @@ fn environment_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
 	home
 		.map(PathBuf::from)
 		.or_else(|| Some(PathBuf::from(format!("{}{}", env.get("HOMEDRIVE")?, env.get("HOMEPATH")?))))
-}
-
-fn storage_root(home: &Path, scheme: &str) -> PathBuf {
-	home
-		.join(".omp")
-		.join("oauth")
-		.join("native")
-		.join(platform_name())
-		.join(scheme)
 }
 
 const fn platform_name() -> &'static str {
