@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- Fixed late close/error callbacks from an old daemon-broker connection rejecting requests on its replacement connection.
 - Fixed stale archive listings after same-size rewrites with restored mtime, including filesystem timestamp collisions.
 - Fixed Ctrl+C printing `9;5u` in the shell after force-quitting omp with a third Ctrl+C while it was still closing the session
 - Fixed Smart unexpected-stop recovery continuing finished answers, which added extra "nothing more to add" turns

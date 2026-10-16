@@ -32,6 +32,8 @@ const BROKER_SPAWN_OPTIONS = { detached: true, windowsHide: true } as const;
 
 interface PendingRequest {
 	operation: DaemonOperation;
+	/** Late callbacks may reject this connection's RPCs, never a replacement's. */
+	socket: IpcConnection;
 	resolve: (result: DaemonRpcResult) => void;
 	reject: (error: Error) => void;
 	timer: NodeJS.Timeout;
@@ -156,7 +158,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 			pending.removeAbort?.();
 			reject(new Error(`Daemon ${operation.op} request timed out`));
 		}, requestTimeoutMs(operation));
-		const pending: PendingRequest = { operation, resolve, reject, timer };
+		const pending: PendingRequest = { operation, socket, resolve, reject, timer };
 		if (signal) {
 			const abort = (): void => {
 				if (!this.#pending.delete(id)) return;
@@ -324,22 +326,24 @@ class SocketDaemonClient implements DaemonBrokerClient {
 	#bindSocket(socket: IpcConnection): void {
 		this.#socket = socket;
 		socket.start(
-			line => this.#onLine(line),
+			line => this.#onLine(line, socket),
 			() => {
 				// One stable error regardless of the close reason.
-				if (this.#socket === socket) this.#socket = undefined;
-				this.#rejectPending(new Error("Daemon broker connection closed"));
-				this.#scheduleCompletionReconnect();
+				if (this.#socket === socket) {
+					this.#socket = undefined;
+					this.#scheduleCompletionReconnect();
+				}
+				this.#rejectPending(new Error("Daemon broker connection closed"), socket);
 			},
 		);
 	}
 
-	#onLine(line: string): void {
+	#onLine(line: string, socket: IpcConnection): void {
 		let decoded: unknown;
 		try {
 			decoded = JSON.parse(line);
 		} catch (error) {
-			this.#rejectPending(error instanceof Error ? error : new Error(String(error)));
+			this.#rejectPending(error instanceof Error ? error : new Error(String(error)), socket);
 			return;
 		}
 		let message: DaemonWireMessage;
@@ -356,7 +360,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 				logger.warn("Ignoring malformed daemon completion", { error: parseError.message });
 				return;
 			}
-			this.#rejectPending(parseError);
+			this.#rejectPending(parseError, socket);
 			return;
 		}
 		if ("event" in message) {
@@ -365,7 +369,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		}
 		const response = message;
 		const pending = this.#pending.get(response.id);
-		if (!pending) return;
+		if (!pending || pending.socket !== socket) return;
 		this.#pending.delete(response.id);
 		clearTimeout(pending.timer);
 		pending.removeAbort?.();
@@ -427,13 +431,14 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		);
 	}
 
-	#rejectPending(error: Error): void {
-		for (const pending of this.#pending.values()) {
+	#rejectPending(error: Error, socket?: IpcConnection): void {
+		for (const [id, pending] of this.#pending) {
+			if (socket && pending.socket !== socket) continue;
+			this.#pending.delete(id);
 			clearTimeout(pending.timer);
 			pending.removeAbort?.();
 			pending.reject(error);
 		}
-		this.#pending.clear();
 	}
 }
 
