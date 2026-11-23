@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `antigravity-cli` requests failing with `Unknown model ID` when the signed-in account’s agy roster lacks the model: the rejection now blocks only that model on the account and rotates to a sibling login that offers it.
+
 ## [19.1.1] - 2026-11-23
 
 ### Added
